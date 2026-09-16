@@ -198,18 +198,18 @@ def run_experiment_pipeline(
     for i in range(test_len):
         t_idx = test_start_t + i
         time_str = str(prep.times[t_idx]) if t_idx < len(prep.times) else f"step_{t_idx}"
-        act_val = round(float(readout_res.test_actuals_raw[i, 0]), 4)
-        fly_val = round(float(readout_res.test_predictions_raw[i, 0]), 4)
-        pers_val = round(float(pers_res["predictions_test"][i, 0]), 4)
-        ar_val = round(float(ar_res["predictions_test"][i, 0]), 4)
+        act_val = float(readout_res.test_actuals_raw[i, 0])
+        fly_val = float(readout_res.test_predictions_raw[i, 0])
+        pers_val = float(pers_res["predictions_test"][i, 0])
+        ar_val = float(ar_res["predictions_test"][i, 0])
 
         point = {
             "time": time_str,
             "step": int(t_idx),
-            "actual": act_val,
-            "flycast": fly_val,
-            "persistence": pers_val,
-            "autoregressive": ar_val,
+            "actual": round(act_val, 4),
+            "flycast": round(fly_val, 4),
+            "persistence": round(pers_val, 4),
+            "autoregressive": round(ar_val, 4),
             "segment": "test",
         }
         chart_test.append(point)
@@ -218,10 +218,10 @@ def run_experiment_pipeline(
             "time": time_str,
             "step": int(t_idx),
             "segment": "test",
-            "actual": act_val,
-            "flycast": fly_val,
-            "persistence": pers_val,
-            "autoregressive": ar_val,
+            "actual": float(act_val),
+            "flycast": float(fly_val),
+            "persistence": float(pers_val),
+            "autoregressive": float(ar_val),
             "lower_95": None,
             "upper_95": None,
         })
@@ -234,21 +234,21 @@ def run_experiment_pipeline(
     for h in range(forecast_horizon):
         step_h = last_t + h + 1
         time_h = f"+{h+1}h"
-        fly_f = round(float(readout_res.future_forecast_raw[h]), 4)
-        pers_f = round(float(pers_res["future_forecast"][h]), 4)
-        ar_f = round(float(ar_res["future_forecast"][h]), 4)
-        lb_val = round(float(lower_b[h]), 4)
-        ub_val = round(float(upper_b[h]), 4)
+        fly_f = float(readout_res.future_forecast_raw[h])
+        pers_f = float(pers_res["future_forecast"][h])
+        ar_f = float(ar_res["future_forecast"][h])
+        lb_val = float(lower_b[h])
+        ub_val = float(upper_b[h])
 
         point = {
             "time": time_h,
             "step": int(step_h),
             "actual": None,
-            "flycast": fly_f,
-            "persistence": pers_f,
-            "autoregressive": ar_f,
-            "lower_95": lb_val,
-            "upper_95": ub_val,
+            "flycast": round(fly_f, 4),
+            "persistence": round(pers_f, 4),
+            "autoregressive": round(ar_f, 4),
+            "lower_95": round(lb_val, 4),
+            "upper_95": round(ub_val, 4),
             "segment": "future",
         }
         chart_future.append(point)
@@ -258,14 +258,25 @@ def run_experiment_pipeline(
             "step": int(step_h),
             "segment": "future",
             "actual": None,
-            "flycast": fly_f,
-            "persistence": pers_f,
-            "autoregressive": ar_f,
-            "lower_95": lb_val,
-            "upper_95": ub_val,
+            "flycast": float(fly_f),
+            "persistence": float(pers_f),
+            "autoregressive": float(ar_f),
+            "lower_95": float(lb_val),
+            "upper_95": float(ub_val),
         })
 
-    predictions_df = pl.DataFrame(csv_rows)
+    predictions_df = pl.DataFrame(
+        csv_rows,
+        schema_overrides={
+            "actual": pl.Float64,
+            "flycast": pl.Float64,
+            "persistence": pl.Float64,
+            "autoregressive": pl.Float64,
+            "lower_95": pl.Float64,
+            "upper_95": pl.Float64,
+        },
+        infer_schema_length=None,
+    )
 
     # Assemble comprehensive result.json according to Section 34
     result_dict = {

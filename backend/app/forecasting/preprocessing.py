@@ -75,7 +75,7 @@ def parse_and_preprocess_csv(
     delimiter = detect_delimiter(text_sample)
 
     try:
-        df = pl.read_csv(io.BytesIO(csv_bytes), separator=delimiter, infer_schema_length=1000)
+        df = pl.read_csv(io.BytesIO(csv_bytes), separator=delimiter, infer_schema_length=None)
     except Exception as e:
         raise ValueError(f"Could not parse CSV file: {str(e)}")
 
@@ -94,6 +94,13 @@ def parse_and_preprocess_csv(
         time_col = time_column
 
     # 2. Identify or validate target column
+    # Attempt to cast requested target column if it exists in columns but wasn't auto-inferred as numeric
+    if target_column and target_column in cols and not df[target_column].dtype.is_numeric():
+        try:
+            df = df.with_columns(pl.col(target_column).cast(pl.Float64, strict=True))
+        except Exception:
+            pass
+
     numeric_cols = [
         c for c in cols
         if c != time_col and df[c].dtype.is_numeric()
@@ -117,8 +124,22 @@ def parse_and_preprocess_csv(
                 if len(selected_features) >= 5:
                     break
 
+    # Validate non-finite values (reject NaN / Inf, preserve nulls for drop_nulls cleaning)
+    for col_name in selected_features:
+        if df[col_name].dtype.is_float():
+            if bool(df[col_name].is_nan().any()) or bool(df[col_name].is_infinite().any()):
+                raise ValueError(
+                    f"Column '{col_name}' contains invalid non-finite (NaN or Inf) values. "
+                    "Please remove or impute non-finite values before uploading."
+                )
+
     # 3. Clean and sort chronologically
     df_clean = df.select([time_col] + selected_features).drop_nulls()
+
+    # Explicitly cast target column and all selected features to Float64
+    df_clean = df_clean.with_columns([
+        pl.col(col).cast(pl.Float64) for col in selected_features
+    ])
 
     # Sort by time column
     try:
@@ -137,8 +158,11 @@ def parse_and_preprocess_csv(
             f"At least {min_required_rows} are required."
         )
 
-    # 4. Check for constant/flat series
-    target_series = df_clean[target_col].to_numpy()
+    # 4. Check for constant/flat series and finite target
+    target_series = df_clean[target_col].to_numpy().astype(np.float64)
+    if not np.isfinite(target_series).all():
+        raise ValueError(f"Target column '{target_col}' contains invalid non-finite (NaN or Inf) values.")
+
     std_val = float(np.std(target_series))
     if std_val < 1e-6:
         raise ValueError("This signal barely changes, so forecasting it would not be a meaningful reservoir experiment.")

@@ -29,12 +29,20 @@ def generate_lorenz(num_steps: int = 600, dt: float = 0.02, seed: int = 42) -> p
     zs = zs[200:]
 
     timestamps = [f"t_{i:04d}" for i in range(num_steps)]
-    return pl.DataFrame({
-        "timestamp": timestamps,
-        "x_chaotic": [round(float(v), 4) for v in xs],
-        "y_state": [round(float(v), 4) for v in ys],
-        "z_state": [round(float(v), 4) for v in zs],
-    })
+    return pl.DataFrame(
+        {
+            "timestamp": timestamps,
+            "x_chaotic": [round(float(v), 4) for v in xs],
+            "y_state": [round(float(v), 4) for v in ys],
+            "z_state": [round(float(v), 4) for v in zs],
+        },
+        schema_overrides={
+            "timestamp": pl.String,
+            "x_chaotic": pl.Float64,
+            "y_state": pl.Float64,
+            "z_state": pl.Float64,
+        },
+    )
 
 
 def generate_composite_seasonal(num_steps: int = 600, seed: int = 42) -> pl.DataFrame:
@@ -54,12 +62,20 @@ def generate_composite_seasonal(num_steps: int = 600, seed: int = 42) -> pl.Data
     signal = 25.0 + fast_cycle + slow_cycle + trend + noise
     timestamps = [f"2026-01-01 {i % 24:02d}:00" if i < 24 else f"2026-01-{(i//24)+1:02d} {i%24:02d}:00" for i in range(num_steps)]
 
-    return pl.DataFrame({
-        "timestamp": timestamps,
-        "seasonal_signal": [round(float(v), 4) for v in signal],
-        "fast_component": [round(float(v), 4) for v in fast_cycle],
-        "slow_component": [round(float(v), 4) for v in slow_cycle],
-    })
+    return pl.DataFrame(
+        {
+            "timestamp": timestamps,
+            "seasonal_signal": [round(float(v), 4) for v in signal],
+            "fast_component": [round(float(v), 4) for v in fast_cycle],
+            "slow_component": [round(float(v), 4) for v in slow_cycle],
+        },
+        schema_overrides={
+            "timestamp": pl.String,
+            "seasonal_signal": pl.Float64,
+            "fast_component": pl.Float64,
+            "slow_component": pl.Float64,
+        },
+    )
 
 
 def generate_coupled_oscillator(num_steps: int = 600, dt: float = 0.05, seed: int = 42) -> pl.DataFrame:
@@ -81,11 +97,18 @@ def generate_coupled_oscillator(num_steps: int = 600, dt: float = 0.05, seed: in
     vs = vs[100:]
     timestamps = [f"step_{i:04d}" for i in range(num_steps)]
 
-    return pl.DataFrame({
-        "timestamp": timestamps,
-        "displacement": [round(float(v), 4) for v in xs],
-        "velocity": [round(float(v), 4) for v in vs],
-    })
+    return pl.DataFrame(
+        {
+            "timestamp": timestamps,
+            "displacement": [round(float(v), 4) for v in xs],
+            "velocity": [round(float(v), 4) for v in vs],
+        },
+        schema_overrides={
+            "timestamp": pl.String,
+            "displacement": pl.Float64,
+            "velocity": pl.Float64,
+        },
+    )
 
 
 DEMO_CATALOG: Dict[str, Dict[str, Any]] = {
