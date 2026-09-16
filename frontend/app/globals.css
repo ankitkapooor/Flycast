@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #F4F1EA;
+  --foreground: #1A1A18;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar for tables and code blocks */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #EAE6DC;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #C4BFB3;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #A8A397;
+}
+
+/* Subtle scientific grid background */
+.bg-scientific-grid {
+  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(to right, rgba(220, 214, 200, 0.4) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(220, 214, 200, 0.4) 1px, transparent 1px);
+}

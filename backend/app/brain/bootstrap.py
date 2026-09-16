@@ -1,0 +1,133 @@
+"""Bootstrap script for acquiring and processing the MaleCNS v1.0 connectome.
+
+Supports atomic build, anonymous Google Cloud Storage download, and fallback to fixture mode.
+Run directly via:
+    python -m app.brain.bootstrap
+"""
+
+import os
+import shutil
+import logging
+import urllib.request
+from pathlib import Path
+from typing import Optional
+
+from app.config import settings
+from app.brain.manifest import ConnectomeManifest
+from app.brain.preprocess import process_malecns_data
+from app.brain.fixture import save_fixture_to_disk
+from app.brain.loader import is_brain_ready
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("flycast.brain.bootstrap")
+
+GCS_BUCKET = "flyem-male-cns"
+GCS_PREFIX = "v1.0/connectome-data/flat-connectome"
+HTTP_BASE_URL = f"https://storage.googleapis.com/{GCS_BUCKET}/{GCS_PREFIX}"
+
+REQUIRED_SOURCE_FILES = {
+    "weights": "connectome-weights-male-cns-v1.0-minconf-0.5.feather",
+    "annotations": "body-annotations-male-cns-v1.0-minconf-0.5.feather",
+    "neurotransmitters": "body-neurotransmitters-male-cns-v1.0.feather",
+}
+
+
+def download_source_file(filename: str, target_dir: Path) -> Path:
+    """Downloads a single source file from GCS using anonymous access or public HTTPS."""
+    target_path = target_dir / filename
+    if target_path.exists() and target_path.stat().st_size > 1000:
+        logger.info("Found cached raw file %s (%d bytes)", filename, target_path.stat().st_size)
+        return target_path
+
+    logger.info("Downloading %s ...", filename)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Try anonymous gcsfs first if available
+    try:
+        import gcsfs
+        fs = gcsfs.GCSFileSystem(anon=True)
+        gcs_source = f"{GCS_BUCKET}/{GCS_PREFIX}/{filename}"
+        logger.info("Fetching gs://%s via anonymous gcsfs...", gcs_source)
+        fs.get(gcs_source, str(target_path))
+        if target_path.exists() and target_path.stat().st_size > 1000:
+            return target_path
+    except Exception as gcs_err:
+        logger.warning("gcsfs download failed (%s). Falling back to direct public HTTPS...", gcs_err)
+
+    # Fallback to direct HTTPS download
+    url = f"{HTTP_BASE_URL}/{filename}"
+    logger.info("Downloading from URL: %s", url)
+    urllib.request.urlretrieve(url, str(target_path))
+    return target_path
+
+
+def bootstrap_brain(force: bool = False) -> None:
+    """Ensures a valid runtime brain exists in settings.brain_dir."""
+    brain_dir = settings.brain_dir
+
+    if not force and is_brain_ready(brain_dir):
+        logger.info("Connectome already prepared and verified at %s. Skipping bootstrap.", brain_dir)
+        return
+
+    # Check if fixture brain is requested via environment
+    if settings.USE_FIXTURE_BRAIN or os.environ.get("USE_FIXTURE_BRAIN", "").lower() in ("1", "true", "yes"):
+        logger.info("USE_FIXTURE_BRAIN is active. Creating synthetic Drosophila CNS fixture at %s", brain_dir)
+        save_fixture_to_disk(brain_dir, num_neurons=300, seed=settings.CONNECTOME_SEED)
+        return
+
+    # Atomic building directory
+    building_dir = brain_dir.parent / f"{brain_dir.name}.building"
+    if building_dir.exists():
+        shutil.rmtree(building_dir)
+    building_dir.mkdir(parents=True, exist_ok=True)
+
+    # Temporary directory for 1.1GB raw files
+    tmp_raw_dir = Path("/tmp/malecns")
+    tmp_raw_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        logger.info("Initiating MaleCNS v1.0 acquisition...")
+        weights_path = download_source_file(REQUIRED_SOURCE_FILES["weights"], tmp_raw_dir)
+        annotations_path = download_source_file(REQUIRED_SOURCE_FILES["annotations"], tmp_raw_dir)
+        
+        nt_path = None
+        try:
+            nt_path = download_source_file(REQUIRED_SOURCE_FILES["neurotransmitters"], tmp_raw_dir)
+        except Exception as nt_err:
+            logger.warning("Optional neurotransmitters file could not be downloaded: %s", nt_err)
+
+        logger.info("Processing MaleCNS connectome into CSR sparse arrays...")
+        process_malecns_data(
+            weights_feather_path=weights_path,
+            annotations_feather_path=annotations_path,
+            neurotransmitters_feather_path=nt_path,
+            output_dir=building_dir,
+            seed=settings.CONNECTOME_SEED,
+            num_input_neurons=settings.INPUT_NEURONS,
+            num_readout_neurons=settings.READOUT_NEURONS,
+            sign_mode=settings.CONNECTOME_SIGN_MODE,
+        )
+
+        # Atomic rename: building_dir -> brain_dir
+        if brain_dir.exists():
+            shutil.rmtree(brain_dir)
+        building_dir.rename(brain_dir)
+        logger.info("Successfully installed MaleCNS connectome to %s", brain_dir)
+
+    except Exception as e:
+        logger.error("Failed to build real MaleCNS connectome: %s", e)
+        # In CI/restricted network environments, fallback gracefully to fixture brain
+        logger.warning("Falling back to synthetic fixture connectome...")
+        save_fixture_to_disk(brain_dir, num_neurons=300, seed=settings.CONNECTOME_SEED)
+
+    finally:
+        # Cleanup ephemeral raw files
+        if tmp_raw_dir.exists() and not os.environ.get("KEEP_RAW_CONNECTOME"):
+            logger.info("Cleaning up temporary raw files in %s", tmp_raw_dir)
+            shutil.rmtree(tmp_raw_dir, ignore_errors=True)
+        if building_dir.exists():
+            shutil.rmtree(building_dir, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    bootstrap_brain()
