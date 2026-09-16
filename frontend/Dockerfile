@@ -11,8 +11,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Guarantee this directory exists even if there are no static assets yet
 RUN mkdir -p /app/public
+
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
