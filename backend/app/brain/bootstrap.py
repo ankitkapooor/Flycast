@@ -100,11 +100,18 @@ def bootstrap_brain(force: bool = False) -> None:
     building_dir.mkdir(parents=True, exist_ok=True)
 
     # Temporary directory for 1.1GB raw files
-    tmp_raw_dir = Path("/tmp/malecns")
+    raw_dir_env = os.environ.get("RAW_CONNECTOME_DIR")
+    if raw_dir_env:
+        tmp_raw_dir = Path(raw_dir_env)
+    elif (Path(settings.DATA_DIR) / "raw").exists():
+        tmp_raw_dir = Path(settings.DATA_DIR) / "raw"
+    else:
+        tmp_raw_dir = Path("/tmp/malecns")
     tmp_raw_dir.mkdir(parents=True, exist_ok=True)
 
+    build_succeeded = False
     try:
-        logger.info("Initiating MaleCNS v1.0 acquisition...")
+        logger.info("Initiating MaleCNS v1.0 acquisition (storing in %s)...", tmp_raw_dir)
         weights_path = download_source_file(REQUIRED_SOURCE_FILES["weights"], tmp_raw_dir)
         annotations_path = download_source_file(REQUIRED_SOURCE_FILES["annotations"], tmp_raw_dir)
         
@@ -130,6 +137,7 @@ def bootstrap_brain(force: bool = False) -> None:
         if brain_dir.exists():
             shutil.rmtree(brain_dir)
         building_dir.rename(brain_dir)
+        build_succeeded = True
         logger.info("Successfully installed MaleCNS connectome to %s", brain_dir)
 
         try:
@@ -138,22 +146,23 @@ def bootstrap_brain(force: bool = False) -> None:
             logger.info(
                 "MaleCNS Connectome Manifest:\n"
                 "  Dataset: %s\n"
-                "  Status: %s (is_fixture=%s)\n"
+                "  Brain Mode: %s\n"
+                "  Is Fixture: %s\n"
                 "  Runtime Neurons: %d\n"
                 "  Runtime Edges: %d\n"
-                "  CSR Shape: %s\n"
-                "  CSR Nonzero Count: %d\n"
+                "  Matrix Shape: %s\n"
+                "  Matrix NNZ: %d\n"
                 "  Input Neurons: %d\n"
                 "  Readout Neurons: %d",
                 manifest_dict.get("dataset"),
                 manifest_dict.get("brain_mode"),
                 manifest_dict.get("is_fixture"),
-                manifest_dict.get("neurons"),
-                manifest_dict.get("edges"),
-                tuple(manifest_dict.get("csr_shape", [])),
-                manifest_dict.get("csr_nonzero_count", manifest_dict.get("edges")),
-                manifest_dict.get("num_input_neurons"),
-                manifest_dict.get("num_readout_neurons"),
+                manifest_dict.get("runtime_neurons", manifest_dict.get("neurons")),
+                manifest_dict.get("runtime_edges", manifest_dict.get("edges")),
+                tuple(manifest_dict.get("matrix_shape", manifest_dict.get("csr_shape", []))),
+                manifest_dict.get("matrix_nnz", manifest_dict.get("edges")),
+                manifest_dict.get("input_neurons"),
+                manifest_dict.get("readout_neurons"),
             )
         except Exception as log_err:
             logger.warning("Failed to log manifest summary: %s", log_err)
@@ -168,12 +177,17 @@ def bootstrap_brain(force: bool = False) -> None:
             raise e
 
     finally:
-        # Cleanup ephemeral raw files
-        if tmp_raw_dir.exists() and not os.environ.get("KEEP_RAW_CONNECTOME"):
-            logger.info("Cleaning up temporary raw files in %s", tmp_raw_dir)
-            shutil.rmtree(tmp_raw_dir, ignore_errors=True)
+        # Cleanup incomplete building directory if still present
         if building_dir.exists():
+            logger.info("Cleaning up incomplete building directory: %s", building_dir)
             shutil.rmtree(building_dir, ignore_errors=True)
+
+        # Cleanup ephemeral raw files only if build succeeded and KEEP_RAW_CONNECTOME is not set
+        if build_succeeded and tmp_raw_dir.exists() and not os.environ.get("KEEP_RAW_CONNECTOME"):
+            logger.info("Build succeeded. Cleaning up temporary raw files in %s", tmp_raw_dir)
+            shutil.rmtree(tmp_raw_dir, ignore_errors=True)
+        elif not build_succeeded and tmp_raw_dir.exists():
+            logger.info("Preserving downloaded raw files in %s across restarts", tmp_raw_dir)
 
 
 if __name__ == "__main__":
