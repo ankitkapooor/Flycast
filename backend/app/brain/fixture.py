@@ -142,6 +142,8 @@ def save_fixture_to_disk(target_dir: Path, num_neurons: int = 300, seed: int = 4
         normalization="incoming_l1",
         sign_mode="unsigned",
         seed=seed,
+        is_fixture=True,
+        brain_mode="fixture",
         manifest_hash="fixture-hash-male-cns",
     )
 

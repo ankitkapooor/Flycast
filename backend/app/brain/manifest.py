@@ -21,4 +21,6 @@ class ConnectomeManifest(BaseModel):
     normalization: str = "incoming_l1"
     sign_mode: str = "unsigned"
     seed: int = 42
+    is_fixture: bool = False
+    brain_mode: str = "real"  # "real" or "fixture"
     manifest_hash: Optional[str] = None

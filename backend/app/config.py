@@ -49,6 +49,7 @@ class Settings(BaseSettings):
 
     # Testing / Development toggle
     USE_FIXTURE_BRAIN: bool = False
+    ALLOW_FIXTURE_FALLBACK: bool = False
 
     @property
     def brain_dir(self) -> Path:

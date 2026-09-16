@@ -51,12 +51,17 @@ class BrainState:
 _GLOBAL_BRAIN: Optional[BrainState] = None
 
 
-def is_brain_ready(brain_dir: Optional[Path] = None) -> bool:
-    """Checks if valid brain artifacts exist in brain_dir."""
+def is_brain_ready(brain_dir: Optional[Path] = None, require_real: Optional[bool] = None) -> bool:
+    """Checks if valid brain artifacts exist in brain_dir.
+
+    A cached brain only counts as the production MaleCNS brain if its
+    manifest explicitly confirms it is real (dataset == 'male-cns:v1.0' and is_fixture == False).
+    """
     target_dir = brain_dir or settings.brain_dir
     manifest_path = target_dir / "manifest.json"
     if not manifest_path.exists():
         return False
+
     required_files = [
         "body_ids.npy",
         "indptr.npy",
@@ -65,7 +70,31 @@ def is_brain_ready(brain_dir: Optional[Path] = None) -> bool:
         "input_indices.npy",
         "readout_indices.npy",
     ]
-    return all((target_dir / f).exists() for f in required_files)
+    if not all((target_dir / f).exists() for f in required_files):
+        return False
+
+    try:
+        with open(manifest_path, "r") as f:
+            manifest_data = json.load(f)
+        manifest = ConnectomeManifest(**manifest_data)
+
+        # Check if real MaleCNS connectome is required
+        must_be_real = require_real if require_real is not None else (not settings.USE_FIXTURE_BRAIN)
+        if must_be_real:
+            if manifest.is_fixture or manifest.brain_mode != "real" or "fixture" in manifest.dataset.lower():
+                logger.warning(
+                    "Cached brain at %s is a synthetic fixture (dataset=%s, is_fixture=%s, mode=%s), "
+                    "but production MaleCNS connectome is required.",
+                    target_dir,
+                    manifest.dataset,
+                    manifest.is_fixture,
+                    manifest.brain_mode,
+                )
+                return False
+        return True
+    except Exception as err:
+        logger.warning("Failed to validate manifest at %s: %s", manifest_path, err)
+        return False
 
 
 def load_brain(brain_dir: Optional[Path] = None, force_reload: bool = False) -> BrainState:
@@ -81,18 +110,18 @@ def load_brain(brain_dir: Optional[Path] = None, force_reload: bool = False) -> 
     target_dir = brain_dir or settings.brain_dir
 
     if not is_brain_ready(target_dir):
-        if settings.USE_FIXTURE_BRAIN or not (target_dir / "manifest.json").exists():
-            logger.info("Initializing fixture connectome for testing/lightweight mode at %s", target_dir)
+        if settings.USE_FIXTURE_BRAIN:
+            logger.info("USE_FIXTURE_BRAIN active: Initializing fixture connectome at %s", target_dir)
             save_fixture_to_disk(target_dir, num_neurons=300, seed=settings.CONNECTOME_SEED)
         else:
-            raise FileNotFoundError(f"Connectome not ready at {target_dir}. Please run bootstrap first.")
+            raise FileNotFoundError(
+                f"Production MaleCNS connectome not ready at {target_dir}. Please run bootstrap first."
+            )
 
     manifest_path = target_dir / "manifest.json"
     with open(manifest_path, "r") as f:
         manifest_data = json.load(f)
     manifest = ConnectomeManifest(**manifest_data)
-
-    logger.info("Loading connectome from %s (Neurons: %d, Edges: %d)", target_dir, manifest.neurons, manifest.edges)
 
     # Load arrays
     body_ids = np.load(target_dir / "body_ids.npy")
@@ -120,6 +149,27 @@ def load_brain(brain_dir: Optional[Path] = None, force_reload: bool = False) -> 
         (weights, indices, indptr),
         shape=(num_neurons, num_neurons),
         dtype=np.float32,
+    )
+
+    logger.info(
+        "Connectome loaded successfully from %s:\n"
+        "  - Dataset: %s\n"
+        "  - Status: %s\n"
+        "  - Runtime Neurons: %d\n"
+        "  - Edge Count: %d\n"
+        "  - CSR Shape: %s\n"
+        "  - CSR Nonzero Count: %d\n"
+        "  - Input Neurons: %d\n"
+        "  - Readout Neurons: %d",
+        target_dir,
+        manifest.dataset,
+        "FIXTURE" if manifest.is_fixture else "REAL",
+        manifest.neurons,
+        manifest.edges,
+        csr.shape,
+        csr.nnz,
+        manifest.input_neurons,
+        manifest.readout_neurons,
     )
 
     _GLOBAL_BRAIN = BrainState(

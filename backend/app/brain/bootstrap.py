@@ -6,6 +6,7 @@ Run directly via:
 """
 
 import os
+import json
 import shutil
 import logging
 import urllib.request
@@ -70,10 +71,27 @@ def bootstrap_brain(force: bool = False) -> None:
         return
 
     # Check if fixture brain is requested via environment
-    if settings.USE_FIXTURE_BRAIN or os.environ.get("USE_FIXTURE_BRAIN", "").lower() in ("1", "true", "yes"):
+    if settings.USE_FIXTURE_BRAIN:
         logger.info("USE_FIXTURE_BRAIN is active. Creating synthetic Drosophila CNS fixture at %s", brain_dir)
         save_fixture_to_disk(brain_dir, num_neurons=300, seed=settings.CONNECTOME_SEED)
         return
+
+    # If brain_dir exists but is not ready (e.g. stale fixture in production), purge it
+    if brain_dir.exists() and not settings.USE_FIXTURE_BRAIN:
+        manifest_path = brain_dir / "manifest.json"
+        if manifest_path.exists():
+            try:
+                with open(manifest_path, "r") as f:
+                    m_data = json.load(f)
+                if m_data.get("is_fixture") or m_data.get("brain_mode") != "real" or "fixture" in str(m_data.get("dataset", "")).lower():
+                    logger.warning(
+                        "Detected stale synthetic fixture brain at %s while USE_FIXTURE_BRAIN=false. "
+                        "Purging stale fixture to force real MaleCNS connectome build.",
+                        brain_dir,
+                    )
+                    shutil.rmtree(brain_dir, ignore_errors=True)
+            except Exception as read_err:
+                logger.warning("Could not inspect existing manifest at %s: %s", manifest_path, read_err)
 
     # Atomic building directory
     building_dir = brain_dir.parent / f"{brain_dir.name}.building"
@@ -114,11 +132,40 @@ def bootstrap_brain(force: bool = False) -> None:
         building_dir.rename(brain_dir)
         logger.info("Successfully installed MaleCNS connectome to %s", brain_dir)
 
+        try:
+            with open(brain_dir / "manifest.json", "r") as f:
+                manifest_dict = json.load(f)
+            logger.info(
+                "MaleCNS Connectome Manifest:\n"
+                "  Dataset: %s\n"
+                "  Status: %s (is_fixture=%s)\n"
+                "  Runtime Neurons: %d\n"
+                "  Runtime Edges: %d\n"
+                "  CSR Shape: %s\n"
+                "  CSR Nonzero Count: %d\n"
+                "  Input Neurons: %d\n"
+                "  Readout Neurons: %d",
+                manifest_dict.get("dataset"),
+                manifest_dict.get("brain_mode"),
+                manifest_dict.get("is_fixture"),
+                manifest_dict.get("neurons"),
+                manifest_dict.get("edges"),
+                tuple(manifest_dict.get("csr_shape", [])),
+                manifest_dict.get("csr_nonzero_count", manifest_dict.get("edges")),
+                manifest_dict.get("num_input_neurons"),
+                manifest_dict.get("num_readout_neurons"),
+            )
+        except Exception as log_err:
+            logger.warning("Failed to log manifest summary: %s", log_err)
+
     except Exception as e:
-        logger.error("Failed to build real MaleCNS connectome: %s", e)
-        # In CI/restricted network environments, fallback gracefully to fixture brain
-        logger.warning("Falling back to synthetic fixture connectome...")
-        save_fixture_to_disk(brain_dir, num_neurons=300, seed=settings.CONNECTOME_SEED)
+        logger.error("Failed to build real MaleCNS connectome: %s", e, exc_info=True)
+        if settings.ALLOW_FIXTURE_FALLBACK:
+            logger.warning("ALLOW_FIXTURE_FALLBACK is true. Falling back to synthetic fixture connectome...")
+            save_fixture_to_disk(brain_dir, num_neurons=300, seed=settings.CONNECTOME_SEED)
+        else:
+            logger.error("ALLOW_FIXTURE_FALLBACK is false. Aborting connectome bootstrap without fallback.")
+            raise e
 
     finally:
         # Cleanup ephemeral raw files

@@ -15,6 +15,7 @@ import pyarrow.feather as feather
 import scipy.sparse as sp
 
 from app.brain.manifest import ConnectomeManifest
+from app.brain.feather_reader import read_feather_safe
 
 logger = logging.getLogger("flycast.brain.preprocess")
 
@@ -39,8 +40,8 @@ def process_malecns_data(
     sign_mode: str = "unsigned",
 ) -> ConnectomeManifest:
     """Processes MaleCNS Feather files into CSR sparse arrays and metadata."""
-    logger.info("Reading annotations from %s", annotations_feather_path)
-    annotations_df = pl.read_ipc(annotations_feather_path)
+    logger.info("Reading annotations from %s using safe feather reader", annotations_feather_path)
+    annotations_df = read_feather_safe(annotations_feather_path)
 
     # 1. Identify valid neurons: bodies with non-null superclass
     # Column names in MaleCNS: 'bodyId' (or 'bodyid'), 'superclass'
@@ -64,7 +65,8 @@ def process_malecns_data(
     nt_map = {}
     if neurotransmitters_feather_path and neurotransmitters_feather_path.exists():
         try:
-            nt_df = pl.read_ipc(neurotransmitters_feather_path)
+            logger.info("Reading neurotransmitters from %s using safe feather reader", neurotransmitters_feather_path)
+            nt_df = read_feather_safe(neurotransmitters_feather_path)
             nt_id_col = "bodyId" if "bodyId" in nt_df.columns else "bodyid"
             nt_name_col = "predicted_nt" if "predicted_nt" in nt_df.columns else "neurotransmitter"
             if nt_name_col in nt_df.columns:
@@ -204,11 +206,32 @@ def process_malecns_data(
         normalization="incoming_l1",
         sign_mode=sign_mode,
         seed=seed,
+        is_fixture=False,
+        brain_mode="real",
         manifest_hash=artifact_hashes["weights_npy"],
     )
 
     with open(output_dir / "manifest.json", "w") as f:
         f.write(manifest.model_dump_json(indent=2))
 
-    logger.info("Successfully built MaleCNS connectome artifacts at %s", output_dir)
+    logger.info(
+        "Successfully built MaleCNS connectome artifacts at %s:\n"
+        "  - Dataset: %s\n"
+        "  - Status: REAL\n"
+        "  - Runtime Neurons: %d\n"
+        "  - Runtime Edges: %d\n"
+        "  - CSR Shape: (%d, %d)\n"
+        "  - CSR Nonzero Count: %d\n"
+        "  - Sensory Input Neurons: %d\n"
+        "  - Readout Electrodes: %d",
+        output_dir,
+        manifest.dataset,
+        manifest.neurons,
+        manifest.edges,
+        normalized_csr.shape[0],
+        normalized_csr.shape[1],
+        normalized_csr.nnz,
+        manifest.input_neurons,
+        manifest.readout_neurons,
+    )
     return manifest
